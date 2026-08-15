@@ -153,8 +153,12 @@ def decode_amounts(protocol, event_type, data_hex):
     return 0, 0
 
 
-def subscriptions_for(from_block):
-    """Build (address, protocol, event_type, topic0, token0, token1) list for an era."""
+def subscriptions_range(lo, hi):
+    """Build subscriptions for a block range, including BOTH Aave eras if it crosses.
+
+    Uniswap + Compound apply to every era. Aave V2 is included when the range starts
+    before the V3 era boundary; Aave V3 + Spark when it extends past it (FR9).
+    """
     subs = []
     for addr, t0, t1 in UNI_POOLS:
         subs.append((addr, "uniswap_v3", "swap", SWAP_TOPIC, t0, t1))
@@ -163,17 +167,22 @@ def subscriptions_for(from_block):
         subs.append((addr, "compound_v2", "borrow", CMP_BORROW, underlying, ""))
         subs.append((addr, "compound_v2", "withdraw", CMP_REDEEM, underlying, ""))  # redeem→withdraw
         subs.append((addr, "compound_v2", "liquidation", CMP_LIQUIDATE, underlying, ""))
-    if from_block < AAVE_V3_ERA_BLOCK:
+    if lo < AAVE_V3_ERA_BLOCK:
         subs.append((AAVE_V2, "aave_v2", "borrow", AAVE_V2_BORROW, "", ""))
         subs.append((AAVE_V2, "aave_v2", "supply", AAVE_V2_DEPOSIT, "", ""))  # deposit→supply
         subs.append((AAVE_V2, "aave_v2", "liquidation", AAVE_LIQUIDATION, "", ""))
-    else:
+    if hi >= AAVE_V3_ERA_BLOCK:
         for a3, proto in ((AAVE_V3, "aave_v3"), (SPARK, "spark")):
             subs.append((a3, proto, "borrow", AAVE_V3_BORROW, "", ""))
             subs.append((a3, proto, "supply", AAVE_V3_SUPPLY, "", ""))
             subs.append((a3, proto, "withdraw", AAVE_V3_WITHDRAW, "", ""))
             subs.append((a3, proto, "liquidation", AAVE_LIQUIDATION, "", ""))
     return subs
+
+
+def subscriptions_for(from_block):
+    """Single-era subscriptions (era chosen by from_block). Back-compat wrapper."""
+    return subscriptions_range(from_block, from_block)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,12 +228,16 @@ def _call(session, address, topic0, lo, hi, api_key, throttle):
     return []
 
 
-def fetch_logs(session, address, topic0, lo, hi, api_key, throttle):
+def fetch_logs(session, address, topic0, lo, hi, api_key, throttle, *, heartbeat=None):
     """Fetch all logs in [lo, hi], recursively splitting ranges that hit PAGE_CAP."""
-    out, stack = [], [(lo, hi)]
+    out, stack, calls = [], [(lo, hi)], 0
     while stack:
         a, b = stack.pop()
         res = _call(session, address, topic0, a, b, api_key, throttle)
+        calls += 1
+        if heartbeat and calls % 10 == 0:
+            print(f"    …{heartbeat} {calls} calls, block ~{a}, {len(out)} rows so far",
+                  file=sys.stderr, flush=True)
         if len(res) >= PAGE_CAP and b > a:
             mid = (a + b) // 2
             stack.append((mid + 1, b))
@@ -251,15 +264,27 @@ def _log_to_tick(log, protocol, event_type, pool_address, token0, token1):
     }
 
 
+def extract_range(name, lo, hi, out_dir, api_key, throttle):
+    """Extract an arbitrary continuous block range → one gzip CSV (for F1 backtest)."""
+    return _extract(name, lo, hi, out_dir, api_key, throttle)
+
+
 def extract_period(name, out_dir, api_key, throttle):
     if name not in FIXTURES:
         raise KeyError(f"unknown fixture: {name}")
     lo, hi, _cascade = FIXTURES[name]
-    subs = subscriptions_for(lo)
+    return _extract(name, lo, hi, out_dir, api_key, throttle)
+
+
+def _extract(name, lo, hi, out_dir, api_key, throttle):
+    subs = subscriptions_range(lo, hi)
     session = requests.Session()
     rows = []
     for i, (addr, proto, etype, topic0, t0, t1) in enumerate(subs, 1):
-        logs = fetch_logs(session, addr, topic0, lo, hi, api_key, throttle)
+        print(f"  [{i}/{len(subs)}] {proto}/{etype} {addr[:10]}… fetching…",
+              file=sys.stderr, flush=True)
+        logs = fetch_logs(session, addr, topic0, lo, hi, api_key, throttle,
+                          heartbeat=f"[{i}/{len(subs)}]")
         for lg in logs:
             try:
                 rows.append(_log_to_tick(lg, proto, etype, addr, t0, t1))
@@ -282,6 +307,9 @@ def extract_period(name, out_dir, api_key, throttle):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Extract QuantumRadar fixtures from Etherscan")
     ap.add_argument("--period", default="all", help="fixture name or 'all'")
+    ap.add_argument("--from-block", type=int, help="continuous range start (with --to-block, --name)")
+    ap.add_argument("--to-block", type=int, help="continuous range end")
+    ap.add_argument("--name", help="output name for a continuous range extract")
     ap.add_argument("--out-dir", default="fixtures/backtest")
     ap.add_argument("--throttle", type=float, default=0.25, help="seconds between API calls")
     args = ap.parse_args(argv)
@@ -290,6 +318,16 @@ def main(argv=None):
     if not api_key:
         print("ERROR: ETHERSCAN_API_KEY not found (env or .env)", file=sys.stderr)
         return 2
+
+    if args.from_block is not None or args.to_block is not None:
+        if args.from_block is None or args.to_block is None or not args.name:
+            print("ERROR: continuous mode needs --from-block, --to-block and --name", file=sys.stderr)
+            return 2
+        print(f"→ extracting continuous range {args.name} "
+              f"[{args.from_block}, {args.to_block}] ({args.to_block - args.from_block} blocks)",
+              file=sys.stderr)
+        extract_range(args.name, args.from_block, args.to_block, args.out_dir, api_key, args.throttle)
+        return 0
 
     periods = list(FIXTURES) if args.period == "all" else [args.period]
     for name in periods:

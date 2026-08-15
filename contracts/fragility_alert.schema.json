@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "fragility_alert.schema.json",
+  "title": "Fragility alert payload",
+  "description": "Emitted when systemic fragility crosses YELLOW/RED. NO multipleOf constraint anywhere (IEEE-754 makes e.g. 72.38 fail multipleOf:0.01) — see docs/03_BUILD_GUIDE.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "timestamp", "block_number", "score", "alert_level", "rcs"],
+  "properties": {
+    "version": { "type": "string" },
+    "timestamp": { "type": "number", "minimum": 0 },
+    "block_number": { "type": "integer", "minimum": 0 },
+    "score": { "type": "number", "minimum": 0, "maximum": 100 },
+    "alert_level": { "type": "string", "enum": ["YELLOW", "RED"] },
+    "rcs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["contract", "contribution"],
+        "properties": {
+          "contract": { "type": "string" },
+          "contribution": { "type": "number" }
+        }
+      }
+    }
+  }
+}
