@@ -53,3 +53,10 @@ _bmad/
 .agent/
 .trae/
 .code-workspace
+
+# ---- Next.js extension ----
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+npm-debug.log*
