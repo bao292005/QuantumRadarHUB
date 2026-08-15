@@ -116,9 +116,56 @@ xử lý điểm số). PCA-CFI + cleaning giữ lại làm **tín hiệu phụ 
 python3 -m tools.cfi_pca_eval          # PCA-CFI vs entropy: FP giảm, recall 5/7
 python3 -m tools.cfi_ensemble_eval     # ensemble gate: chỉ mất LUNA
 python3 -m tools.entropy_persist_eval  # persistence N: giữ 7/7, giảm FP  ← đã wired
-python3 -m pytest tests/unit -q        # 56 tests pass (gồm persistence/hysteresis)
+python3 -m tools.mps_filter_eval       # Tier-2 MPS generative OOD gate (mechanism demo)
+python3 -m pytest tests/unit -q        # 59 tests pass
 ```
 
-Files thêm: `engine/cfi/clean.py`, `engine/cfi/indicator.py`,
-`tools/cfi_pca_eval.py`, `tools/cfi_ensemble_eval.py`, `tools/entropy_persist_eval.py`.
+Files thêm: `engine/cfi/clean.py`, `engine/cfi/indicator.py`, `engine/mps/generative.py`,
+`tools/{cfi_pca_eval,cfi_ensemble_eval,entropy_persist_eval,mps_filter_eval}.py`.
 Sửa: `emitter/orchestrator.py` (persistence/hysteresis) + tests.
+
+---
+
+## 7. Tier 2 — MPS generative precision-filter
+
+Theo arXiv:2402.17148 (MPS làm mô hình sinh cho chuỗi thời gian tài chính).
+
+### Ý tưởng
+Học **phân phối hành vi "normal"** của DeFi trên vector 4-metric CFI, biểu diễn bằng
+**MPS / tensor-train** (TT-SVD của tensor mật độ thực nghiệm). Cửa sổ **likelihood thấp =
+out-of-distribution (OOD) = bất thường**. Dùng làm **cổng precision**: chỉ xác nhận alert
+khi window vừa fragile (entropy RED) vừa OOD.
+- `engine/mps/generative.py` — `MPSBornDensity` (deterministic, pure numpy, không cần nhãn)
+- Unsupervised → giữ tính honest + củng cố narrative tensor-network.
+
+### Kết quả (gate: entropy≥90 AND OOD≥P) — train tạm trên `cont_q2_2022`
+| anomaly P | Crisis | busd | euler |
+|---|---|---|---|
+| (none) | 7/7 | 23% | 13% |
+| **90** | **7/7** | **5%** | **7%** |
+| 95 | 6/7 | 1% | 2% |
+
+**P90: giữ 7/7 (kể cả LUNA) + busd 23→5%, euler 13→7%** — tốt hơn PCA-CFI gate (mất LUNA)
+và persistence (cắt busd/euler ít hơn). MPS giữ LUNA vì đo OOD theo **mật độ** (LUNA lệch
+phân phối ở chiều khác), không phụ thuộc một gate tương quan đơn.
+
+### So 3 hướng giảm FP (đều fixed-threshold, cùng giao thức)
+| Hướng | Crisis | busd | euler | Giữ LUNA |
+|---|---|---|---|---|
+| PCA-CFI gate (G50) | 6/7 | ~0% | 3% | ❌ |
+| Persistence N=5 (đã wired) | 7/7 | ~6 ep | 1 | ✅ |
+| **MPS filter P90** | **7/7** | 23→5% | 13→7% | ✅ |
+
+### ⚠️ Giới hạn — mới là MECHANISM DEMO
+- **Train nhiễm bẩn:** `cont_q2_2022` **chứa** luna + stETH → 2 event đó là *in-sample* →
+  detection của chúng bị **circular** (số busd/euler thì hợp lệ vì khác thời kỳ).
+- Cần train trên **dải calm SẠCH không trùng test event** (seg1-3, đang extract) → số
+  out-of-sample tin cậy.
+- **Chưa wire** vào orchestrator — chờ số sạch.
+
+### Định hướng sản phẩm
+- **Pha 1 (giờ):** MPS generative làm **precision-filter không cần nhãn** — khả thi ngay,
+  giảm FP, giữ honesty.
+- **Pha 2 (khi đủ nhãn/multi-chain):** TN classifier (2304.12501) hợp nhất tín hiệu.
+  **Chưa làm** vì chỉ 7 event → overfit. Không over-engineer: core CFI+RCS+persistence đã
+  đủ cho một sản phẩm honest.

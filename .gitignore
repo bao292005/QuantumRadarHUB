@@ -28,8 +28,8 @@ env/
 ENV/
 
 # ---- Fixtures / large data (regenerable via tools.extract_fixtures) ----
-# fixtures/backtest/*.csv.gz
-# *.csv.gz
+fixtures/backtest/*.csv.gz
+*.csv.gz
 
 # ---- Logs / runtime output ----
 *.log
