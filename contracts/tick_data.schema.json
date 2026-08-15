@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tick_data.schema.json",
+  "title": "Normalized on-chain tick event",
+  "description": "11-field normalized event schema (docs/04_DATA_GUIDE.md). amount0/1 are decimal strings at wei precision (signed for swaps) to avoid float precision loss.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "block_number",
+    "block_timestamp",
+    "protocol",
+    "event_type",
+    "pool_address",
+    "token0",
+    "token1",
+    "amount0",
+    "amount1",
+    "tx_hash",
+    "log_index"
+  ],
+  "properties": {
+    "block_number": { "type": "integer", "minimum": 0 },
+    "block_timestamp": { "type": "integer", "minimum": 0 },
+    "protocol": {
+      "type": "string",
+      "enum": ["uniswap_v3", "aave_v2", "aave_v3", "spark", "compound_v2"]
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["swap", "mint", "burn", "borrow", "supply", "withdraw", "liquidation"]
+    },
+    "pool_address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+    "token0": { "type": "string" },
+    "token1": { "type": "string" },
+    "amount0": { "type": "string" },
+    "amount1": { "type": "string" },
+    "tx_hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "log_index": { "type": "integer", "minimum": 0 }
+  }
+}
