@@ -60,3 +60,5 @@ node_modules/
 out/
 tsconfig.tsbuildinfo
 npm-debug.log*
+.quantumradar/
+.venv-win/

@@ -12,6 +12,7 @@ scipy==1.13.1              # transitive via sklearn; pinned for reproducibility
 # ── Tier 2: Data extraction + loading (REQUIRED for fixtures) ─────────────
 requests==2.32.2           # Etherscan V2 logs API
 eth-utils==6.0.0           # keccak() for Compound V2 topic0 computation
+eth-hash[pycryptodome]==0.8.0  # concrete Keccak backend required by eth-utils
 jsonschema==4.26.0         # tick-data schema validation in csv_loader
 
 # ── Tier 4: Realtime pipeline + API + demo (optional for live demo) ───────
@@ -23,6 +24,7 @@ pydantic==2.12.5           # comes with fastapi; pinned
 # ── Tests (recommended) ───────────────────────────────────────────────────
 pytest==9.1.1
 pytest-asyncio==1.4.0
+httpx==0.28.1             # FastAPI TestClient transport
 
 # ── NOT NEEDED for CFI+MPS v2 (legacy approaches only) ────────────────────
 # torch==2.13.0        # only engine/tensor + engine/mps/naive.py (abandoned graph-MPS)

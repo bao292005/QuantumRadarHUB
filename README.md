@@ -74,3 +74,43 @@ Giờ 21-24: Polish + rehearse demo
 > CFI đo mức độ đồng bộ (correlation) của activity giữa các protocol.
 > Khi correlation matrix "tập trung" (1 eigenvalue lớn chiếm hết) → hệ dễ sụp dây chuyền.
 > MPS đo entropy của phổ eigenvalue; RCS chỉ ra protocol nào là tâm chấn.
+
+---
+
+## Browser extension + backend
+
+### Chạy backend trên Windows
+
+```powershell
+cd D:\UI.UX\QuantumRadarHUB
+py -3.12 -m venv .venv-win
+.\.venv-win\Scripts\python -m pip install -r requirements.txt
+.\.venv-win\Scripts\python -m uvicorn emitter.api:app --host 127.0.0.1 --port 8000 --reload
+```
+
+API documentation: `http://127.0.0.1:8000/docs`
+
+Extension mặc định kết nối `http://127.0.0.1:8000`. Khi chưa có sự kiện ingest,
+snapshot trả `source: "demo"`; sau lần `POST /ingest` đầu tiên, snapshot chuyển sang
+`source: "live"` và sử dụng score/RCS từ engine CFI+MPS.
+
+### Extension API
+
+| Method | Endpoint | Mục đích |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `GET` | `/api/v1/extension/snapshot` | Toàn bộ state cần cho sidebar |
+| `GET` | `/api/v1/protection` | Mode và policy hiện tại |
+| `PUT` | `/api/v1/protection/mode` | Chuyển `off` / `advisor` / `auto` |
+| `PATCH` | `/api/v1/protection/policies/{id}` | Bật/tắt policy |
+| `GET` | `/api/v1/actions` | Lịch sử score/action |
+| `POST` | `/ingest` | Đưa tick on-chain vào scorer |
+
+Để dùng API đã deploy, build extension với biến môi trường:
+
+```powershell
+$env:NEXT_PUBLIC_QUANTUMRADAR_API_URL="https://api.example.com"
+npm run build
+```
+
+Đồng thời thêm domain API vào `host_permissions` trong `public/manifest.json`.
