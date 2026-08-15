@@ -1,0 +1,32 @@
+# QuantumRadar — Hackathon requirements (pinned to verified working versions)
+# Python 3.11+ required. Tested on 3.12.4.
+#
+# Install:  pip install -r requirements.txt
+# Or use:   ./setup.sh
+
+# ── Tier 1: Core CFI+MPS algorithm (REQUIRED for 7/7 result) ──────────────
+numpy==1.26.3
+scikit-learn==1.4.0        # Ledoit-Wolf shrinkage correlation
+scipy==1.13.1              # transitive via sklearn; pinned for reproducibility
+
+# ── Tier 2: Data extraction + loading (REQUIRED for fixtures) ─────────────
+requests==2.32.2           # Etherscan V2 logs API
+eth-utils==6.0.0           # keccak() for Compound V2 topic0 computation
+jsonschema==4.26.0         # tick-data schema validation in csv_loader
+
+# ── Tier 4: Realtime pipeline + API + demo (optional for live demo) ───────
+fastapi==0.141.1
+uvicorn==0.40.0
+aiohttp==3.9.5             # async webhook fan-out
+pydantic==2.12.5           # comes with fastapi; pinned
+
+# ── Tests (recommended) ───────────────────────────────────────────────────
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# ── NOT NEEDED for CFI+MPS v2 (legacy approaches only) ────────────────────
+# torch==2.13.0        # only engine/tensor + engine/mps/naive.py (abandoned graph-MPS)
+# networkx==3.2.1      # only engine/graph builder (abandoned)
+# web3==7.16.0         # only realtime WSS ingestion (backtest doesn't need it)
+# eth-abi==5.2.0       # only ingestion/decoders (realtime; extract uses raw hex)
+# Uncomment above ONLY if running the full 661-test suite.
