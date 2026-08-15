@@ -62,3 +62,6 @@ tsconfig.tsbuildinfo
 npm-debug.log*
 .quantumradar/
 .venv-win/
+
+
+doc-ref/*

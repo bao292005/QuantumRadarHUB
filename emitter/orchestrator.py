@@ -37,15 +37,24 @@ def cfi_mps_score(events, *, min_windows_active=MIN_WINDOWS_ACTIVE):
 class RealtimeAlerter:
     """Ingest events one/many at a time; emit debounced fragility alerts."""
 
-    def __init__(self, emit=None, scorer=None, *, min_history=CFI_MIN_HISTORY, debounce_blocks=300):
+    def __init__(self, emit=None, scorer=None, *, min_history=CFI_MIN_HISTORY,
+                 debounce_blocks=300, persistence=4, fire=90.0, clear=70.0):
         self.emit = emit or (lambda alert: None)
         self.scorer = scorer or cfi_mps_score
         self.min_history = min_history
         self.debounce_blocks = debounce_blocks
+        # persistence + hysteresis: alert turns ON after `persistence` consecutive
+        # scoring-window evaluations at >= `fire`, and stays ON until score < `clear`.
+        self.persistence = persistence
+        self.fire = fire
+        self.clear = clear
         self.events = deque()
         self.current_score = 0.0
         self.current_rcs = {}
-        self._last_level = None
+        self.alert_on = False
+        self._red_run = 0
+        self._last_window_id = None
+        self._was_on = False
         self._last_emit_block = None
 
     def ingest(self, event):
@@ -67,11 +76,23 @@ class RealtimeAlerter:
     def _evaluate(self, block):
         score, rcs = self.scorer(list(self.events))
         self.current_score, self.current_rcs = score, rcs
-        level = alert_level(score)
+
+        # Advance the persistence/hysteresis state once per new scoring window
+        # (a fresh window emerges roughly every STRIDE_BLOCKS blocks).
+        window_id = block // STRIDE_BLOCKS
+        if window_id != self._last_window_id:
+            self._last_window_id = window_id
+            if not self.alert_on:
+                self._red_run = self._red_run + 1 if score >= self.fire else 0
+                if self._red_run >= self.persistence:
+                    self.alert_on = True
+            elif score < self.clear:
+                self.alert_on = False
+                self._red_run = 0
 
         alert = None
-        if level is not None:
-            rising = level != self._last_level
+        if self.alert_on:
+            rising = not self._was_on
             cooled = (self._last_emit_block is None
                       or block - self._last_emit_block >= self.debounce_blocks)
             if rising or cooled:
@@ -79,5 +100,5 @@ class RealtimeAlerter:
                 if alert is not None:
                     self.emit(alert)
                     self._last_emit_block = block
-        self._last_level = level
+        self._was_on = self.alert_on
         return alert

@@ -31,13 +31,15 @@ def test_subscribe_dedup(tmp_path):
 
 
 def test_ingest_updates_score_and_history(tmp_path):
-    c = _client(tmp_path, {100: 40, 200: 95})
-    c.post("/ingest", json={"block_number": 100})
-    r = c.post("/ingest", json={"block_number": 200})
+    # persistence=4: a single RED window must not alert; the 4th consecutive one does.
+    c = _client(tmp_path, {b: 95 for b in (100, 200, 300, 400)})
+    for b in (100, 200, 300):
+        assert c.post("/ingest", json={"block_number": b}).json()["alerted"] is False
+    r = c.post("/ingest", json={"block_number": 400})
     assert r.json()["score"] == 95 and r.json()["alerted"] is True
     assert c.get("/score").json()["alert_level"] == "RED"
     hist = c.get("/history").json()["history"]
-    assert len(hist) == 2 and hist[-1]["score"] == 95
+    assert len(hist) == 4 and hist[-1]["score"] == 95
 
 
 def test_unsubscribe(tmp_path):
