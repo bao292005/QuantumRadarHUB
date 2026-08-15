@@ -18,6 +18,7 @@ export interface BacktestPoint {
   block: number;
   score: number;
   level: "RED" | "YELLOW" | null;
+  confirmed: boolean;
   rcs: Array<{ contract: string; contribution: number }>;
   price: number | null;
   ohlc: BacktestOHLC | null;
@@ -52,6 +53,7 @@ export interface ExtensionSnapshot {
     rcs: Array<{ contract: string; contribution: number }>;
   };
   risks: RiskItem[];
+  scenarios?: Array<{ id: string; title: string; probability: number; impact: string; timeframe: string; level: string }>;
   protection: {
     mode: ProtectionMode;
     policies: Array<ProtectionPolicy & { enabled: boolean }>;

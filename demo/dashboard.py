@@ -72,6 +72,20 @@ def _liq_per_window(events):
     return out
 
 
+def _confirmed_alerts(scores, n=4, fire=90.0, clear=70.0):
+    """Persistence + hysteresis (matches emitter/orchestrator): alert ON after n
+    consecutive RED windows, stays ON until score < clear. Returns bool per window."""
+    on, out = False, []
+    for i, s in enumerate(scores):
+        if not on:
+            if i + 1 >= n and all(scores[j] >= fire for j in range(i - n + 1, i + 1)):
+                on = True
+        elif s < clear:
+            on = False
+        out.append(on)
+    return out
+
+
 @lru_cache(maxsize=16)
 def build_timeline(fixture):
     """Precompute per-window candle (OHLC), fragility, RCS, liquidation, B0."""
@@ -93,13 +107,11 @@ def build_timeline(fixture):
         return series[min(i + FIT_WINDOW, len(series) - 1)] if series else None
 
     cascade = FIXTURES[fixture][2] if fixture in FIXTURES else None
-    points, first_red_block = [], None
+    points = []
     for i, raw in enumerate(rolling_scores(R, fit_window=FIT_WINDOW)):
         s = round(score_100(raw), 2)
         blk = scored_index_to_block(ends, i)
         level = "RED" if s >= 90 else ("YELLOW" if s >= 70 else None)
-        if level == "RED" and first_red_block is None and (cascade is None or blk <= cascade):
-            first_red_block = blk
         rcs_top = []
         if s >= 50:
             window = R[:, i:i + FIT_WINDOW]
@@ -115,6 +127,13 @@ def build_timeline(fixture):
             "b0": round(100.0 * (b0[i] / b0_max), 2) if i < len(b0) and b0_max else 0.0,
         })
 
+    # persistence/hysteresis confirmed alerts (the deployed detector's actual alerting)
+    confirmed = _confirmed_alerts([p["score"] for p in points])
+    first_red_block = None
+    for i, p in enumerate(points):
+        p["confirmed"] = confirmed[i]
+        if confirmed[i] and first_red_block is None and (cascade is None or p["block"] <= cascade):
+            first_red_block = p["block"]
     lead_h = None
     if cascade is not None and first_red_block is not None:
         lead_h = round((cascade - first_red_block) * SECONDS_PER_BLOCK / 3600.0, 1)
@@ -224,7 +243,7 @@ function idxAt(x,W){return viewStart+(x-PAD)/candleW;}
 function range(W){return[Math.max(0,Math.floor(viewStart)),Math.min(N()-1,Math.ceil(viewStart+visCount(W)))];}
 function scoreColor(l){return l==='RED'?'#ff4d4f':l==='YELLOW'?'#f5c542':'#58a6ff';}
 function nearest(b){let bi=0,bd=1e18;T.points.forEach((p,i)=>{const d=Math.abs(p.block-b);if(d<bd){bd=d;bi=i;}});return bi;}
-function bands(c,W,H,s,e){for(let i=s;i<=e;i++){const p=T.points[i];if(!p.level)continue;const x=xAt(i,W),w=Math.max(1,candleW);c.fillStyle=p.level==='RED'?'rgba(255,77,79,.13)':'rgba(245,197,66,.10)';c.fillRect(x-w/2,4,w,H-8);}}
+function bands(c,W,H,s,e){for(let i=s;i<=e;i++){const p=T.points[i];if(!p.confirmed)continue;const x=xAt(i,W),w=Math.max(1,candleW);c.fillStyle=p.level==='YELLOW'?'rgba(245,197,66,.14)':'rgba(255,77,79,.16)';c.fillRect(x-w/2,4,w,H-8);}}
 function vline(c,idx,W,H,col,txt){if(idx<0)return;const x=xAt(idx,W);if(x<PAD-1||x>W)return;c.strokeStyle=col;c.setLineDash([4,4]);c.beginPath();c.moveTo(x,4);c.lineTo(x,H-4);c.stroke();c.setLineDash([]);if(txt){c.fillStyle=col;c.font='10px monospace';c.fillText(txt,x+2,11);}}
 function marks(c,W,H){vline(c,cascadeIdx,W,H,'#8b949e','cascade');vline(c,firstRedIdx,W,H,'#ff8c42','⚠RED');}
 function cursor(c,W,H){const x=xAt(playhead,W);if(x<PAD||x>W)return;c.strokeStyle='rgba(230,237,243,.45)';c.beginPath();c.moveTo(x,4);c.lineTo(x,H-4);c.stroke();}
@@ -248,9 +267,9 @@ function hist(){const {c,W,H}=setup($('cvL')),p=T.points;c.clearRect(0,0,W,H);co
  let hi=1;for(let i=s;i<=e;i++)hi=Math.max(hi,p[i].liq);const y=v=>H-12-(v/hi)*(H-18),w=Math.max(1,candleW*0.62);
  for(let i=s;i<=e;i++){const v=p[i].liq;if(!v)continue;const x=xAt(i,W);c.fillStyle=p[i].level==='RED'?'#ff4d4f':'#ff6b6b';c.fillRect(x-w/2,y(v),Math.max(1,w),H-12-y(v));}
  marks(c,W,H);cursor(c,W,H);c.fillStyle='#8b949e';c.font='10px monospace';c.fillText('max '+hi,6,11);}
-function feed(){let out=[],prev=null;for(let i=0;i<=playhead;i++){const p=T.points[i];if(p.level&&p.level!==prev){const r=(p.rcs||[]).map(x=>x.contract).slice(0,2).join(', ');
-  out.push(`<div class="fe ${p.level==='RED'?'red':'yellow'}"><b>${p.level}</b> ${p.score.toFixed(0)} · blk ${p.block}${r?' · '+r:''}</div>`);}prev=p.level;}
- return out.reverse().join('')||'<div class="muted" style="font-size:11px">no alerts yet</div>';}
+function feed(){let out=[],prev=false;for(let i=0;i<=playhead;i++){const p=T.points[i];if(p.confirmed&&!prev){const r=(p.rcs||[]).map(x=>x.contract).slice(0,2).join(', ');
+  out.push(`<div class="fe red"><b>ALERT</b> ${p.score.toFixed(0)} · blk ${p.block}${r?' · '+r:''}</div>`);}prev=p.confirmed;}
+ return out.reverse().join('')||'<div class="muted" style="font-size:11px">no confirmed alerts yet</div>';}
 function side(){const p=T.points[playhead];$('score').textContent=p.score.toFixed(1);
  const l=$('lvl');l.textContent=p.level||'CALM';l.className='lvl '+(p.level==='RED'?'red':p.level==='YELLOW'?'yellow':'green');
  $('score').className='score '+(p.level==='RED'?'red':p.level==='YELLOW'?'yellow':'');

@@ -9,6 +9,8 @@ Endpoints:
 
 The alert emit callback fans out to subscribers; every ingest records a timeline point.
 """
+from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
@@ -16,6 +18,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from engine.scoring import alert_level
+from engine.mps.scenario import MPSScenario
+
+
+@lru_cache(maxsize=1)
+def _fit_scenario_model():
+    """Fit the MPS-generative scenario model on a score trajectory (cont_q2_2022 proxy)."""
+    try:
+        from ingestion.csv_loader import load_events
+        from engine.mps.v2 import rolling_scores
+        from engine.scoring import score_100, FIT_WINDOW
+        from tools._common import fixture_returns
+        p = Path("fixtures/backtest/cont_q2_2022.csv.gz")
+        if not p.exists():
+            return None
+        _, R = fixture_returns(load_events(str(p)))
+        if R is None or R.shape[1] < FIT_WINDOW:
+            return None
+        series = [score_100(x) for x in rolling_scores(R, fit_window=FIT_WINDOW)]
+        return MPSScenario(order=2).fit([series])
+    except Exception:
+        return None
 from emitter.orchestrator import RealtimeAlerter
 from emitter.extension_state import ExtensionState, build_extension_snapshot
 from emitter.registry import SubscriberRegistry
@@ -68,6 +91,7 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
 
     alerter = alerter or RealtimeAlerter(emit=_emit, scorer=scorer)
     replay = ReplayDriver(alerter, store)
+    scenario_model = _fit_scenario_model()
 
     app.state.registry = registry
     app.state.store = store
@@ -81,7 +105,16 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
 
     @app.get("/api/v1/extension/snapshot")
     def extension_snapshot():
-        return build_extension_snapshot(alerter, store, extension_state)
+        snap = build_extension_snapshot(alerter, store, extension_state)
+        # Real scenario probabilities from the MPS-generative model (replace demo when live)
+        if snap["source"] == "live" and scenario_model is not None:
+            scores = [h["score"] for h in store.history(8)]
+            if len(scores) >= 2:
+                probs = scenario_model.scenarios(scores[-scenario_model.order:], horizon=36, n_paths=400)
+                for sc in snap.get("scenarios", []):
+                    if sc.get("id") in probs:
+                        sc["probability"] = probs[sc["id"]]
+        return snap
 
     @app.get("/api/v1/protection")
     def protection():

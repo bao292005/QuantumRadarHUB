@@ -88,9 +88,10 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     if (lo > hi) { lo = 0; hi = 1; } if (hi === lo) hi = lo + 1;
     const y = (v: number) => H - 16 - ((v - lo) / (hi - lo)) * (H - 26);
     for (let i = s; i <= e; i++) {
-      const lv = p[i].level; if (!lv) continue;
+      if (!p[i].confirmed) continue;   // alert bands = persistence-confirmed alerts (new algo)
       const x = xAt(i, W), w = Math.max(1, view.current.candleW);
-      c.fillStyle = lv === "RED" ? "rgba(255,77,79,.13)" : "rgba(245,197,66,.10)"; c.fillRect(x - w / 2, 4, w, H - 8);
+      c.fillStyle = p[i].level === "YELLOW" ? "rgba(245,197,66,.14)" : "rgba(255,77,79,.16)";
+      c.fillRect(x - w / 2, 4, w, H - 8);
     }
     marks(c, W, H);
     const w = Math.max(1, view.current.candleW * 0.62);
