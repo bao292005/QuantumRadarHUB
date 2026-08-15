@@ -2,7 +2,39 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { fetchExtensionSnapshot, patchProtectionPolicy, putProtectionMode } from "@/lib/api";
-import type { ExtensionSnapshot, ProtectionMode } from "@/lib/types";
+import type { BacktestPoint, ExtensionSnapshot, RiskItem, Severity } from "@/lib/types";
+import type { ProtectionMode } from "@/lib/types";
+
+// Overlay the chart's exact current point onto the polled snapshot so the extension
+// numbers match the candlestick frame-for-frame (no backend round-trip lag).
+function mergeLive(base: ExtensionSnapshot | null, live: BacktestPoint | null): ExtensionSnapshot | null {
+  if (!base || !live) return base;
+  const score = live.score;
+  const level = (live.level ?? "CALM") as "CALM" | "YELLOW" | "RED";
+  const probability = Math.min(95, Math.max(35, Math.round(score * 0.92)));
+  const rcs = live.rcs ?? [];
+  let primary_risk = base.market.primary_risk;
+  let risks: RiskItem[] = base.risks;
+  if (rcs.length) {
+    primary_risk = `${rcs[0].contract} (RCS epicenter)`;
+    const status = score >= 90 ? "Rủi ro cao" : score >= 70 ? "Trung bình" : "Theo dõi";
+    const sev = (r: number): Severity => (r === 0 ? (score >= 90 ? "high" : score >= 70 ? "medium" : "low") : r === 1 ? "medium" : "low");
+    risks = rcs.slice(0, 3).map((r, i) => ({
+      id: String(r.contract),
+      title: `${r.contract} — RCS epicenter`,
+      probability: Math.min(95, Math.max(35, Math.round(score * (0.95 - 0.2 * i)))),
+      horizon: "12-24h",
+      status: i === 0 ? status : "Theo dõi",
+      severity: sev(i),
+    }));
+  }
+  return {
+    ...base,
+    source: "live",
+    market: { ...base.market, stress_score: score, warning_score: Math.min(100, Math.round(score + 6)), alert_level: level, probability, primary_risk, rcs },
+    risks,
+  };
+}
 
 type BackendStatus = "connecting" | "online" | "offline";
 interface ExtensionDataContextValue {
@@ -15,7 +47,7 @@ interface ExtensionDataContextValue {
 
 const ExtensionDataContext = createContext<ExtensionDataContextValue | null>(null);
 
-export function ExtensionDataProvider({ children }: { children: React.ReactNode }) {
+export function ExtensionDataProvider({ children, live = null }: { children: React.ReactNode; live?: BacktestPoint | null }) {
   const [snapshot, setSnapshot] = useState<ExtensionSnapshot | null>(null);
   const [status, setStatus] = useState<BackendStatus>("connecting");
 
@@ -36,7 +68,7 @@ export function ExtensionDataProvider({ children }: { children: React.ReactNode 
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === "AbortError")) setStatus("offline");
       });
-    const interval = window.setInterval(refresh, 15_000);
+    const interval = window.setInterval(refresh, 2_000);
     return () => { controller.abort(); window.clearInterval(interval); };
   }, [refresh]);
 
@@ -63,7 +95,8 @@ export function ExtensionDataProvider({ children }: { children: React.ReactNode 
     } catch { setStatus("offline"); }
   }, []);
 
-  const value = useMemo(() => ({ snapshot, status, refresh, updateMode, updatePolicy }), [snapshot, status, refresh, updateMode, updatePolicy]);
+  const effective = useMemo(() => mergeLive(snapshot, live), [snapshot, live]);
+  const value = useMemo(() => ({ snapshot: effective, status, refresh, updateMode, updatePolicy }), [effective, status, refresh, updateMode, updatePolicy]);
   return <ExtensionDataContext.Provider value={value}>{children}</ExtensionDataContext.Provider>;
 }
 

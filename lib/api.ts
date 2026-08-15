@@ -1,4 +1,4 @@
-import type { ExtensionSnapshot, ProtectionMode } from "./types";
+import type { BacktestFixtures, BacktestTimeline, ExtensionSnapshot, ProtectionMode } from "./types";
 
 export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_QUANTUMRADAR_API_URL ?? "http://127.0.0.1:8000"
@@ -16,6 +16,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchExtensionSnapshot(signal?: AbortSignal) {
   return request<ExtensionSnapshot>("/api/v1/extension/snapshot", { signal });
+}
+
+export function fetchBacktestFixtures(signal?: AbortSignal) {
+  return request<BacktestFixtures>("/api/v1/backtest/fixtures", { signal });
+}
+
+export function fetchBacktestTimeline(fixture: string, signal?: AbortSignal) {
+  return request<BacktestTimeline>(
+    `/api/v1/backtest/timeline?fixture=${encodeURIComponent(fixture)}`,
+    { signal },
+  );
+}
+
+export function startReplay(fixture: string, speed = 1) {
+  return request<{ ok: boolean; running: boolean; fixture: string; i: number; n: number }>(
+    "/api/v1/replay",
+    { method: "POST", body: JSON.stringify({ fixture, speed }) },
+  );
 }
 
 export function putProtectionMode(mode: ProtectionMode) {

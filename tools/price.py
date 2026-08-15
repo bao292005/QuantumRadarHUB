@@ -63,6 +63,43 @@ def window_price_series(events):
     return ends, prices
 
 
+def window_ohlc(events):
+    """Per activity-window OHLC of ETH price (USDC/WETH). Flat doji forward-filled.
+
+    Returns (ends, ohlc) aligned to window_end_blocks; each ohlc entry is
+    {"o","h","l","c"} or None until the first swap is seen.
+    """
+    ends = window_end_blocks(events)
+    swaps = []
+    for e in events:
+        if e.get("event_type") != "swap":
+            continue
+        if e.get("pool_address", "").lower() != USDC_WETH_POOL:
+            continue
+        p = _swap_price(e)
+        if p is not None:
+            swaps.append((e["block_number"], p))
+    swaps.sort(key=lambda x: x[0])
+    blocks = [b for b, _ in swaps]
+
+    ohlc, last_close = [], None
+    for end in ends:
+        lo = end - WINDOW_BLOCKS
+        li = bisect.bisect_right(blocks, lo)
+        ri = bisect.bisect_right(blocks, end)
+        win = [swaps[j][1] for j in range(li, ri)]
+        if win:
+            last_close = win[-1]
+            ohlc.append({"o": round(win[0], 2), "h": round(max(win), 2),
+                         "l": round(min(win), 2), "c": round(win[-1], 2)})
+        elif last_close is not None:
+            v = round(last_close, 2)
+            ohlc.append({"o": v, "h": v, "l": v, "c": v})  # flat doji
+        else:
+            ohlc.append(None)
+    return ends, ohlc
+
+
 def forward_drawdown_labels(events, scored_blocks, *,
                             drawdown_pct=DRAWDOWN_PCT, horizon_hours=HORIZON_HOURS,
                             fit_window=40):

@@ -16,15 +16,18 @@ def test_timeline_structure():
     t = build_timeline("luna_2022_05_09")
     assert "points" in t and len(t["points"]) > 10
     assert t["cascade_block"] == 14_732_113
+    assert t["event_name"] == "LUNA / UST collapse"
     p = t["points"][0]
-    assert set(p) == {"block", "score", "level", "rcs"}
+    assert set(p) == {"block", "score", "level", "rcs", "price", "liq", "b0", "ohlc"}
 
 
-def test_red_appears_before_cascade():
+def test_red_appears_before_cascade_with_lead_time():
     t = build_timeline("luna_2022_05_09")
     cascade = t["cascade_block"]
     reds_pre = [p for p in t["points"] if p["level"] == "RED" and p["block"] <= cascade]
     assert reds_pre, "expected at least one RED alert before the cascade block"
+    assert t["first_red_block"] is not None and t["first_red_block"] <= cascade
+    assert t["lead_hours"] is not None and t["lead_hours"] > 0
 
 
 def test_endpoints():

@@ -129,6 +129,32 @@ def build_extension_snapshot(alerter, store, extension_state):
         timeline = DEMO_ACTIONS
 
     probability = min(95, max(35, round(score * 0.92)))
+
+    # Live: derive the primary risk + risk list from the REAL RCS epicenter.
+    # Demo / no-RCS: keep the illustrative defaults. (scenarios & portfolio below
+    # remain illustrative — there is no live portfolio feed.)
+    if is_live and rcs:
+        severity = "high" if score >= 90 else ("medium" if score >= 70 else "low")
+        status_text = "Rủi ro cao" if score >= 90 else ("Trung bình" if score >= 70 else "Theo dõi")
+        primary_risk = f"{rcs[0]['contract']} (RCS epicenter)"
+        risks = []
+        for rank, item in enumerate(rcs[:3]):
+            risks.append({
+                "id": str(item["contract"]),
+                "title": f"{item['contract']} — RCS epicenter",
+                "probability": min(95, max(35, round(score * (0.95 - 0.2 * rank)))),
+                "horizon": "12-24h",
+                "status": status_text if rank == 0 else "Theo dõi",
+                "severity": severity if rank == 0 else ("medium" if rank == 1 else "low"),
+            })
+    else:
+        primary_risk = "Liquidity Shock"
+        risks = [
+            {"id": "liquidity", "title": "Liquidity Shock", "probability": probability, "horizon": "12-24h", "status": "Rủi ro cao", "severity": "high"},
+            {"id": "depeg", "title": "Stablecoin Depeg", "probability": 58, "horizon": "24-48h", "status": "Trung bình", "severity": "medium"},
+            {"id": "cascade", "title": "Lending Cascade", "probability": 45, "horizon": "2-3 ngày", "status": "Theo dõi", "severity": "low"},
+        ]
+
     return {
         "version": "1",
         "generated_at": time.time(),
@@ -141,14 +167,10 @@ def build_extension_snapshot(alerter, store, extension_state):
             "probability": probability,
             "confidence": 89,
             "horizon": "12-24h",
-            "primary_risk": "Liquidity Shock",
+            "primary_risk": primary_risk,
             "rcs": rcs,
         },
-        "risks": [
-            {"id": "liquidity", "title": "Liquidity Shock", "probability": probability, "horizon": "12-24h", "status": "Rủi ro cao", "severity": "high"},
-            {"id": "depeg", "title": "Stablecoin Depeg", "probability": 58, "horizon": "24-48h", "status": "Trung bình", "severity": "medium"},
-            {"id": "cascade", "title": "Lending Cascade", "probability": 45, "horizon": "2-3 ngày", "status": "Theo dõi", "severity": "low"},
-        ],
+        "risks": risks,
         "scenarios": [
             {"id": "liquidity", "title": "Liquidity Shock", "probability": 50, "impact": "-21%", "timeframe": "24-48h", "level": "Nghiêm trọng"},
             {"id": "recovery", "title": "Recovery", "probability": 35, "impact": "+6%", "timeframe": "72h", "level": "Tích cực"},

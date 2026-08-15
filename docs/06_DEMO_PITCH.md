@@ -66,6 +66,16 @@ python3 -m demo.dashboard   # localhost:8080
 > → 7/7 crisis detect. Trung thực: calibration có thể tune tốt hơn, và detection một
 > số case là "spiky" (mean thấp, spike lẻ).
 
+**Q: Đã test out-of-sample liên tục chưa? So với baseline thế nào? (câu hỏi khó)**
+> Rồi — và chúng tôi công bố cả null-result. Dựng F1 out-of-sample nghiêm ngặt (nhãn
+> liquidation-cascade on-chain khách quan, time-split + embargo, baseline B0, bootstrap
+> CI) trên dải liên tục 2 tháng (641k sự kiện). **Phát hiện trung thực: để dự báo KHỐI
+> LƯỢNG thanh lý, baseline đếm-borrow thắng (AUC 0.77 vs 0.48)** — vì volume tự tương
+> quan. Điều đó khẳng định **ranh giới đúng** của sản phẩm: chúng tôi đo *cấu trúc tương
+> quan hệ thống*, không đo mức độ hoạt động. Ở đúng bài toán của mình — phát hiện các
+> cascade hệ thống lớn — event-level cho 7/7 kể cả FTX mà B0 miss. Chi tiết:
+> `09_F1_HONEST_FINDINGS.md`.
+
 **Q: FTX là off-chain, sao bắt được?**
 > Chúng tôi KHÔNG bắt FTX fraud (off-chain). Chúng tôi bắt **ETH price cascade on-chain
 > đi kèm** FTX week (~37h trước). Trung thực về ranh giới này.
@@ -97,6 +107,9 @@ python3 -m demo.dashboard   # localhost:8080
 - ĐỪNG nói "bắt được FTX fraud" → chỉ ETH cascade đi kèm
 - ĐỪNG dùng số "6/6" từ p80-metric (ẢO) → dùng "7/7 fixed-threshold"
 - ĐỪNG giấu điểm yếu spiky → judge kỹ thuật sẽ hỏi, trung thực ghi điểm
+- ĐỪNG nói "F1 cao hơn baseline" → continuous F1 (dự báo volume thanh lý) baseline B0
+  thắng; ta chỉ hơn ở **event-level** (7/7, FTX). Trung thực scope, đừng thổi phồng.
+- ĐỪNG nói "dự báo khối lượng thanh lý" → đo cấu trúc tương quan hệ thống, không đo volume
 
 ---
 

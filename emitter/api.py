@@ -19,6 +19,7 @@ from engine.scoring import alert_level
 from emitter.orchestrator import RealtimeAlerter
 from emitter.extension_state import ExtensionState, build_extension_snapshot
 from emitter.registry import SubscriberRegistry
+from emitter.replay import ReplayDriver
 from emitter.score_store import ScoreStore
 from emitter.webhook import fan_out_sync
 
@@ -33,6 +34,11 @@ class ProtectionModeUpdate(BaseModel):
 
 class PolicyUpdate(BaseModel):
     enabled: bool
+
+
+class ReplayRequest(BaseModel):
+    fixture: str
+    speed: float = 1.0
 
 
 def create_app(*, registry=None, store=None, alerter=None, scorer=None, extension_state=None):
@@ -61,11 +67,13 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
                 pass
 
     alerter = alerter or RealtimeAlerter(emit=_emit, scorer=scorer)
+    replay = ReplayDriver(alerter, store)
 
     app.state.registry = registry
     app.state.store = store
     app.state.alerter = alerter
     app.state.extension_state = extension_state
+    app.state.replay = replay
 
     @app.get("/health")
     def health():
@@ -95,6 +103,31 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
         if n < 1 or n > 500:
             raise HTTPException(status_code=422, detail="n must be between 1 and 500")
         return {"actions": store.history(n)}
+
+    @app.post("/api/v1/replay")
+    def start_replay(req: ReplayRequest):
+        result = replay.start(req.fixture, req.speed)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "fixture not available"))
+        return result
+
+    @app.get("/api/v1/replay")
+    def replay_status():
+        return replay.status()
+
+    @app.post("/api/v1/replay/stop")
+    def stop_replay():
+        return replay.stop()
+
+    @app.get("/api/v1/backtest/fixtures")
+    def backtest_fixtures():
+        from demo.dashboard import _available_fixtures
+        return {"fixtures": _available_fixtures()}
+
+    @app.get("/api/v1/backtest/timeline")
+    def backtest_timeline(fixture: str = "luna_2022_05_09"):
+        from demo.dashboard import build_timeline
+        return build_timeline(fixture)
 
     @app.post("/subscribe")
     def subscribe(sub: Subscription):

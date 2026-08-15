@@ -1,5 +1,5 @@
-import ExtensionShell from "@/components/extension/ExtensionShell";
+import MainDemo from "@/components/demo/MainDemo";
 
 export default function Home() {
-  return <main className="extension-root"><ExtensionShell /></main>;
+  return <MainDemo />;
 }
