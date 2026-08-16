@@ -116,7 +116,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     cursor(c, W, H);
     // MPS price-path forecast fan (p10–p90 band + median) projected forward from anchor
     const fc = forecastRef.current;
-    if (fc && fc.bands.length) {
+    if (fc && fc.bands && fc.bands.length) {
       const a = fc.anchor_index;
       c.fillStyle = "rgba(88,166,255,.12)";
       c.beginPath();
@@ -147,7 +147,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     st = false; for (let i = s; i <= e; i++) { const X = xAt(i, W), Y = y(p[i].score); st ? c.lineTo(X, Y) : c.moveTo(X, Y); st = true; } c.stroke();
     // MPS systemic-fragility forecast fan (p10–p90 band + median) projected forward from anchor
     const fc = forecastRef.current;
-    if (fc?.fragility?.bands.length) {
+    if (fc?.fragility?.bands?.length) {
       const a = fc.anchor_index, fb = fc.fragility.bands;
       c.fillStyle = "rgba(255,140,66,.14)";
       c.beginPath();
@@ -383,7 +383,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
             <div style={{ fontSize: 24, fontWeight: 700, color: forecast.fragility.p_cascade >= 40 ? "#ff4d4f" : forecast.fragility.p_cascade >= 15 ? "#f5c542" : "#3fb950" }}>{forecast.fragility.p_cascade}%</div>
             <div style={{ fontSize: 11, color: "#8b949e" }}>fragility hiện tại {forecast.current_score ?? cur?.score.toFixed(1)} · MPS forward-sample</div>
           </div>}
-          {forecast && <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1f2937" }}>
+          {forecast?.p_drawdown != null && <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1f2937" }}>
             <div style={{ fontSize: 12, color: "#8b949e" }}>Dự báo giá ETH (MPS, ~16h)</div>
             <div style={{ fontSize: 24, fontWeight: 700, color: forecast.p_drawdown >= 30 ? "#ff4d4f" : forecast.p_drawdown >= 15 ? "#f5c542" : "#3fb950" }}>{forecast.p_drawdown}%</div>
             <div style={{ fontSize: 11, color: "#8b949e" }}>P(sụt ≥{forecast.drawdown_pct}%) · P(giảm) {forecast.p_down}%</div>

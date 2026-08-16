@@ -43,12 +43,12 @@ export interface ForecastBand { step: number; p10: number; p25: number; p50: num
 export interface FragilityBand { step: number; p10: number; p50: number; p90: number }
 export interface FragilityForecast { horizon: number; bands: FragilityBand[]; p_cascade: number }
 export interface Forecast {
-  current_price: number;
-  horizon: number;
-  bands: ForecastBand[];
-  p_drawdown: number;
-  drawdown_pct: number;
-  p_down: number;
+  current_price?: number;
+  horizon?: number;
+  bands?: ForecastBand[];
+  p_drawdown?: number;
+  drawdown_pct?: number;
+  p_down?: number;
   anchor_index: number;
   fragility?: FragilityForecast;
   current_score?: number;
