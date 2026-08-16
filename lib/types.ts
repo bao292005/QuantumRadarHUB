@@ -79,6 +79,12 @@ export interface ExtensionSnapshot {
   };
   risks: RiskItem[];
   scenarios?: Array<{ id: string; title: string; probability: number; impact: string; timeframe: string; level: string }>;
+  portfolio: {
+    expected_loss: string;
+    risk_score: number;
+    safe_allocation: number;
+    assets: Array<{ symbol: string; allocation: number; risk: string; loss: string }>;
+  };
   protection: {
     mode: ProtectionMode;
     policies: Array<ProtectionPolicy & { enabled: boolean }>;

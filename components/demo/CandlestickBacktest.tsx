@@ -318,7 +318,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
 
   return (
     <div style={{ flex: 1, minWidth: 0, background: "#0b0f1a", color: "#e6edf3", fontFamily: "ui-monospace, Menlo, monospace", padding: 16, overflow: "auto" }}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>QuantumRadar — Backtest nến (dữ liệu thật)</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>QuantumRadar</div>
       <div style={{ ...cardStyle, marginBottom: 10, fontSize: 14, borderColor: heroColor }}>{heroText}</div>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
         <span style={{ fontSize: 12, color: "#8b949e" }}>crisis</span>
