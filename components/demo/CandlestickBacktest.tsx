@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchBacktestFixtures, fetchBacktestTimeline, startReplay } from "@/lib/api";
-import type { BacktestPoint, BacktestTimeline } from "@/lib/types";
+import { fetchBacktestFixtures, fetchBacktestTimeline, fetchForecast, fetchCorr, startReplay } from "@/lib/api";
+import type { BacktestPoint, BacktestTimeline, Forecast, CorrMatrix } from "@/lib/types";
 
 const PAD = 46;
-const SPEEDS: [number, string][] = [[160, "0.5x"], [80, "1x"], [40, "2x"], [20, "4x"]];
+// intervals in ms per time-step — 10x slower than before so each mốc time is readable
+const SPEEDS: [number, string][] = [[1600, "0.5x"], [800, "1x"], [400, "2x"], [200, "4x"]];
 
 function scoreColor(level: string | null) {
   return level === "RED" ? "#ff4d4f" : level === "YELLOW" ? "#f5c542" : "#58a6ff";
@@ -14,14 +15,16 @@ function scoreColor(level: string | null) {
 export default function CandlestickBacktest({ autoPlay = false, syncReplay = false, onPoint, initialFixture = "luna_2022_05_09" }: { autoPlay?: boolean; syncReplay?: boolean; onPoint?: (p: BacktestPoint | null) => void; initialFixture?: string } = {}) {
   const [fixtures, setFixtures] = useState<{ name: string; category: string }[]>([]);
   const [fixture, setFixture] = useState(initialFixture);
+  const [reloadKey, setReloadKey] = useState(0);
   const [T, setT] = useState<BacktestTimeline | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(80);
-  const [cur, setCur] = useState<{ score: number; level: string | null; block: number; price: number | null; rcs: { contract: string; contribution: number }[] } | null>(null);
+  const [speed, setSpeed] = useState(800);
+  const [cur, setCur] = useState<{ score: number; level: string | null; block: number; price: number | null; rcs: { contract: string; contribution: number }[]; breadth: number; n_active: number } | null>(null);
 
   const Tref = useRef<BacktestTimeline | null>(null);
   const cCanvas = useRef<HTMLCanvasElement>(null);
   const oCanvas = useRef<HTMLCanvasElement>(null);
+  const hCanvas = useRef<HTMLCanvasElement>(null);
   const view = useRef({ candleW: 6, viewStart: 0 });
   const playhead = useRef(0);
   const cascadeIdx = useRef(-1);
@@ -34,6 +37,16 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
   onPointRef.current = onPoint;
   const emittedIdx = useRef(-1);
   const lastEmit = useRef(0);
+  const [forecast, setForecast] = useState<Forecast | null>(null);
+  const forecastRef = useRef<Forecast | null>(null);
+  forecastRef.current = forecast;
+  const fxRef = useRef(fixture);
+  fxRef.current = fixture;
+  const lastFc = useRef(0);
+  const [corr, setCorr] = useState<CorrMatrix | null>(null);
+  const corrRef = useRef<CorrMatrix | null>(null);
+  corrRef.current = corr;
+  const lastCorr = useRef(0);
 
   const N = () => Tref.current?.points.length ?? 0;
   const nearest = (block: number) => {
@@ -101,6 +114,19 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
       const yo = y(o.o), yc = y(o.c); c.fillStyle = col; c.fillRect(x - w / 2, Math.min(yo, yc), Math.max(1, w), Math.max(1, Math.abs(yc - yo)));
     }
     cursor(c, W, H);
+    // MPS price-path forecast fan (p10–p90 band + median) projected forward from anchor
+    const fc = forecastRef.current;
+    if (fc && fc.bands.length) {
+      const a = fc.anchor_index;
+      c.fillStyle = "rgba(88,166,255,.12)";
+      c.beginPath();
+      fc.bands.forEach((bd, h) => { const X = xAt(a + h + 1, W), Y = y(bd.p90); h === 0 ? c.moveTo(X, Y) : c.lineTo(X, Y); });
+      for (let h = fc.bands.length - 1; h >= 0; h--) { c.lineTo(xAt(a + h + 1, W), y(fc.bands[h].p10)); }
+      c.closePath(); c.fill();
+      c.strokeStyle = "rgba(88,166,255,.75)"; c.lineWidth = 1.4; c.setLineDash([4, 3]); c.beginPath();
+      fc.bands.forEach((bd, h) => { const X = xAt(a + h + 1, W), Y = y(bd.p50); h === 0 ? c.moveTo(X, Y) : c.lineTo(X, Y); });
+      c.stroke(); c.setLineDash([]);
+    }
     c.fillStyle = "#8b949e"; c.font = "10px monospace";
     c.fillText("$" + hi.toFixed(0), 4, y(hi) + 9); c.fillText("$" + lo.toFixed(0), 4, y(lo));
   };
@@ -119,16 +145,53 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     let st = false; for (let i = s; i <= e; i++) { const X = xAt(i, W), Y = y(p[i].b0); st ? c.lineTo(X, Y) : c.moveTo(X, Y); st = true; } c.stroke(); c.setLineDash([]);
     c.strokeStyle = "#58a6ff"; c.lineWidth = 1.6; c.beginPath();
     st = false; for (let i = s; i <= e; i++) { const X = xAt(i, W), Y = y(p[i].score); st ? c.lineTo(X, Y) : c.moveTo(X, Y); st = true; } c.stroke();
+    // MPS systemic-fragility forecast fan (p10–p90 band + median) projected forward from anchor
+    const fc = forecastRef.current;
+    if (fc?.fragility?.bands.length) {
+      const a = fc.anchor_index, fb = fc.fragility.bands;
+      c.fillStyle = "rgba(255,140,66,.14)";
+      c.beginPath();
+      fb.forEach((bd, h) => { const X = xAt(a + h + 1, W), Y = y(bd.p90); h === 0 ? c.moveTo(X, Y) : c.lineTo(X, Y); });
+      for (let h = fb.length - 1; h >= 0; h--) { c.lineTo(xAt(a + h + 1, W), y(fb[h].p10)); }
+      c.closePath(); c.fill();
+      c.strokeStyle = "rgba(255,140,66,.85)"; c.lineWidth = 1.4; c.setLineDash([4, 3]); c.beginPath();
+      fb.forEach((bd, h) => { const X = xAt(a + h + 1, W), Y = y(bd.p50); h === 0 ? c.moveTo(X, Y) : c.lineTo(X, Y); });
+      c.stroke(); c.setLineDash([]);
+    }
     cursor(c, W, H);
     const pc = p[playhead.current], cx = xAt(playhead.current, W);
     if (cx >= PAD && cx <= W) { c.fillStyle = scoreColor(pc.level); c.beginPath(); c.arc(cx, y(pc.score), 3.2, 0, 7); c.fill(); }
     c.fillStyle = "#8b949e"; c.font = "10px monospace"; c.fillText("90", 6, y(90) + 3); c.fillText("70", 6, y(70) + 3);
   };
 
+  // whole-market correlation heatmap — synchronization is the systemic-crisis signature
+  const corrColor = (v: number) => {
+    const t = Math.max(-1, Math.min(1, v));
+    if (t >= 0) return `rgba(255,77,79,${(0.12 + 0.78 * t).toFixed(3)})`;   // positive → red
+    return `rgba(88,166,255,${(0.12 + 0.78 * -t).toFixed(3)})`;             // negative → blue
+  };
+  const drawHeatmap = () => {
+    const cv = hCanvas.current; if (!cv) return;
+    const { c, W, H } = setup(cv); c.clearRect(0, 0, W, H);
+    const cm = corrRef.current;
+    if (!cm || !cm.matrix.length) {
+      c.fillStyle = "#6e7681"; c.font = "11px monospace"; c.fillText("—", 6, 16); return;
+    }
+    const n = cm.matrix.length, gap = 1;
+    const cell = Math.max(4, Math.min((W - 2) / n, (H - 2) / n));
+    const ox = 1, oy = 1;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        c.fillStyle = corrColor(cm.matrix[i][j]);
+        c.fillRect(ox + j * cell, oy + i * cell, cell - gap, cell - gap);
+      }
+    }
+  };
+
   const draw = useCallback(() => {
-    drawCandles(); drawOsc();
+    drawCandles(); drawOsc(); drawHeatmap();
     const p = Tref.current?.points[playhead.current];
-    if (p) setCur({ score: p.score, level: p.level, block: p.block, price: p.price, rcs: p.rcs });
+    if (p) setCur({ score: p.score, level: p.level, block: p.block, price: p.price, rcs: p.rcs, breadth: p.breadth, n_active: p.n_active });
     if (onPointRef.current && playhead.current !== emittedIdx.current) {
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (now - lastEmit.current > 400) {
@@ -139,6 +202,24 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const maybeForecast = () => {
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (now - lastFc.current < 500) return;
+    lastFc.current = now;
+    fetchForecast(fxRef.current, playhead.current)
+      .then((f) => { if (!f.error) { forecastRef.current = f; setForecast(f); draw(); } })
+      .catch(() => {});
+  };
+
+  const maybeCorr = () => {
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (now - lastCorr.current < 500) return;
+    lastCorr.current = now;
+    fetchCorr(fxRef.current, playhead.current)
+      .then((m) => { if (!m.error) { corrRef.current = m; setCorr(m); drawHeatmap(); } })
+      .catch(() => {});
+  };
 
   // load fixtures once
   useEffect(() => { fetchBacktestFixtures().then((d) => setFixtures(d.fixtures)).catch(() => {}); }, []);
@@ -153,9 +234,11 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
       cascadeIdx.current = d.cascade_block ? nearest(d.cascade_block) : -1;
       firstRedIdx.current = d.first_red_block ? nearest(d.first_red_block) : -1;
       const W = cCanvas.current?.clientWidth || 900; fitAll(W); draw();
+      forecastRef.current = null; setForecast(null); lastFc.current = 0; maybeForecast();
+      corrRef.current = null; setCorr(null); lastCorr.current = 0; maybeCorr();
     }).catch(() => {});
     return () => controller.abort();
-  }, [fixture, draw]);
+  }, [fixture, reloadKey, draw]);
 
   const stop = useCallback(() => setPlaying(false), []);
   const follow = () => {
@@ -166,7 +249,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
     if (playhead.current >= N() - 1) {
       if (loopRef.current) playhead.current = 0; else { setPlaying(false); return; }
     } else playhead.current += 1;
-    follow(); draw();
+    follow(); draw(); maybeForecast(); maybeCorr();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draw]);
   const play = () => {
@@ -242,6 +325,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
         <select value={fixture} onChange={(e) => setFixture(e.target.value)} style={btn}>
           {fixtures.map((f) => <option key={f.name} value={f.name}>{f.name} [{f.category}]</option>)}
         </select>
+        <button style={btn} onClick={() => { stop(); setReloadKey((k) => k + 1); }} title="tải lại biểu đồ nến cho crisis hiện tại">🔄 reload</button>
         <button style={btn} onClick={play}>{playing ? "⏸ pause" : "▶ play"}</button>
         <span style={{ fontSize: 12, color: "#8b949e" }}>speed</span>
         {SPEEDS.map(([ms, lbl]) => (
@@ -254,7 +338,7 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
         <span style={{ marginLeft: "auto", fontSize: 11, color: "#8b949e" }}>wheel=zoom · drag=pan</span>
       </div>
       <input type="range" min={0} max={Math.max(0, (T?.points.length ?? 1) - 1)} value={cur ? Math.min(playhead.current, (T?.points.length ?? 1) - 1) : 0}
-        onChange={(e) => { stop(); playhead.current = Number(e.target.value); follow(); draw(); }}
+        onChange={(e) => { stop(); playhead.current = Number(e.target.value); follow(); draw(); maybeForecast(); maybeCorr(); }}
         style={{ width: "100%", marginBottom: 10 }} />
       <div style={{ display: "flex", gap: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -263,10 +347,17 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
             <canvas ref={cCanvas} style={{ ...canvasStyle, height: 300 }}
               onWheel={onWheel} onMouseDown={(e) => { drag.current = { x: e.clientX, vs: view.current.viewStart }; }} onDoubleClick={() => { fitAll(cCanvas.current!.clientWidth); draw(); }} />
           </div>
-          <div style={cardStyle}>
-            <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>FRAGILITY oscillator — RED≥90 / YELLOW≥70 (+ B0 baseline)</div>
+          <div style={{ ...cardStyle, marginBottom: 8 }}>
+            <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>FRAGILITY oscillator — RED≥90 / YELLOW≥70 (+ B0 baseline · fan cam = dự báo hệ thống)</div>
             <canvas ref={oCanvas} style={{ ...canvasStyle, height: 150 }}
               onWheel={onWheel} onMouseDown={(e) => { drag.current = { x: e.clientX, vs: view.current.viewStart }; }} onDoubleClick={() => { fitAll(oCanvas.current!.clientWidth); draw(); }} />
+          </div>
+          <div style={cardStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+              <span style={{ fontSize: 11, color: "#8b949e" }}>MA TRẬN TƯƠNG QUAN {corr ? `${corr.labels.length}×${corr.labels.length}` : ""} — đỏ = đồng pha (rủi ro hệ thống)</span>
+              <span style={{ fontSize: 10, color: "#6e7681" }}>khủng hoảng = cả lưới chuyển đỏ đồng loạt</span>
+            </div>
+            <canvas ref={hCanvas} style={{ ...canvasStyle, height: 190, cursor: "default" }} />
           </div>
         </div>
         <div style={{ ...cardStyle, width: 220 }}>
@@ -280,6 +371,24 @@ export default function CandlestickBacktest({ autoPlay = false, syncReplay = fal
             </div>
           ))}
           {(!cur?.rcs || cur.rcs.length === 0) && <div style={{ color: "#8b949e" }}>—</div>}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1f2937" }}>
+            <div style={{ fontSize: 12, color: "#8b949e" }}>Đồng bộ toàn thị trường</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: (cur?.breadth ?? 0) >= 8 ? "#ff4d4f" : (cur?.breadth ?? 0) >= 4 ? "#f5c542" : "#3fb950" }}>
+              {cur?.breadth ?? 0}<span style={{ fontSize: 14, color: "#6e7681" }}>/{cur?.n_active ?? 0} giao thức</span>
+            </div>
+            <div style={{ fontSize: 11, color: "#8b949e" }}>số giao thức tương quan cao (|ρ|≥0.3) — càng nhiều càng rủi ro hệ thống</div>
+          </div>
+          {forecast?.fragility && <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1f2937" }}>
+            <div style={{ fontSize: 12, color: "#8b949e" }}>P(cascade hệ thống, ~16h)</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: forecast.fragility.p_cascade >= 40 ? "#ff4d4f" : forecast.fragility.p_cascade >= 15 ? "#f5c542" : "#3fb950" }}>{forecast.fragility.p_cascade}%</div>
+            <div style={{ fontSize: 11, color: "#8b949e" }}>fragility hiện tại {forecast.current_score ?? cur?.score.toFixed(1)} · MPS forward-sample</div>
+          </div>}
+          {forecast && <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #1f2937" }}>
+            <div style={{ fontSize: 12, color: "#8b949e" }}>Dự báo giá ETH (MPS, ~16h)</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: forecast.p_drawdown >= 30 ? "#ff4d4f" : forecast.p_drawdown >= 15 ? "#f5c542" : "#3fb950" }}>{forecast.p_drawdown}%</div>
+            <div style={{ fontSize: 11, color: "#8b949e" }}>P(sụt ≥{forecast.drawdown_pct}%) · P(giảm) {forecast.p_down}%</div>
+            <div style={{ fontSize: 10, color: "#6e7681", marginTop: 4 }}>path forecast · backtest model</div>
+          </div>}
         </div>
       </div>
     </div>

@@ -9,6 +9,8 @@ Endpoints:
 
 The alert emit callback fans out to subscribers; every ingest records a timeline point.
 """
+import os
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -99,6 +101,21 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
     app.state.extension_state = extension_state
     app.state.replay = replay
 
+    # Warm the timeline cache in the background so the FIRST time a crisis is opened
+    # it renders instantly (build_timeline is ~5s cold, ~0s cached). Skipped under
+    # pytest to avoid loading heavy fixtures during tests.
+    if "PYTEST_CURRENT_TEST" not in os.environ and not os.environ.get("QUANTUMRADAR_NO_WARM"):
+        def _warm():
+            try:
+                from demo.dashboard import build_timeline, _available_fixtures
+                names = [f["name"] for f in _available_fixtures()]
+                ordered = ["luna_2022_05_09"] + [n for n in names if n != "luna_2022_05_09"]
+                for n in ordered:
+                    build_timeline(n)
+            except Exception:
+                pass
+        threading.Thread(target=_warm, daemon=True).start()
+
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "quantumradar-api", "version": "1"}
@@ -161,6 +178,16 @@ def create_app(*, registry=None, store=None, alerter=None, scorer=None, extensio
     def backtest_timeline(fixture: str = "luna_2022_05_09"):
         from demo.dashboard import build_timeline
         return build_timeline(fixture)
+
+    @app.get("/api/v1/backtest/forecast")
+    def backtest_forecast(fixture: str = "luna_2022_05_09", i: int = 0):
+        from demo.dashboard import forecast_at
+        return forecast_at(fixture, i)
+
+    @app.get("/api/v1/backtest/corr")
+    def backtest_corr(fixture: str = "luna_2022_05_09", i: int = 0):
+        from demo.dashboard import corr_at
+        return corr_at(fixture, i)
 
     @app.post("/subscribe")
     def subscribe(sub: Subscription):

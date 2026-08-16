@@ -14,11 +14,13 @@ import bisect
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from ingestion.csv_loader import load_events
 from engine.mps.v2 import rolling_scores, rcs_scores
+from engine.cfi.correlation import shrinkage_correlation
 from engine.scoring import score_100, FIT_WINDOW, WINDOW_BLOCKS, STRIDE_BLOCKS
 from tools._common import fixture_returns, window_end_blocks, scored_index_to_block, SECONDS_PER_BLOCK
 from tools.price import window_ohlc
@@ -72,6 +74,23 @@ def _liq_per_window(events):
     return out
 
 
+def _breadth(window):
+    """Whole-market synchronization: (# protocols with high avg |corr|, # active)."""
+    R = np.asarray(window, dtype=float)
+    mask = R.std(axis=1) > 1e-12
+    R = R[mask]
+    if R.shape[0] < 2:
+        return 0, int(R.shape[0])
+    C = np.corrcoef(R)
+    if C.ndim < 2:
+        return 0, int(R.shape[0])
+    n = C.shape[0]
+    A = np.abs(C).copy()
+    np.fill_diagonal(A, 0.0)
+    strength = A.sum(axis=1) / max(1, n - 1)
+    return int((strength >= 0.3).sum()), n
+
+
 def _confirmed_alerts(scores, n=4, fire=90.0, clear=70.0):
     """Persistence + hysteresis (matches emitter/orchestrator): alert ON after n
     consecutive RED windows, stays ON until score < clear. Returns bool per window."""
@@ -87,13 +106,28 @@ def _confirmed_alerts(scores, n=4, fire=90.0, clear=70.0):
 
 
 @lru_cache(maxsize=16)
-def build_timeline(fixture):
-    """Precompute per-window candle (OHLC), fragility, RCS, liquidation, B0."""
+def _load_fixture(fixture):
+    """Load events + returns ONCE per fixture (shared by timeline/corr/forecast).
+
+    load_events (~1s) + fixture_returns (~1.7s) dominate every request; caching them
+    turns a per-scrub corr_at from ~3.3s into milliseconds and makes crisis-switching
+    snappy. Returns (events, contracts, R) or None if the fixture is not extracted.
+    """
     path = FIXTURE_DIR / f"{fixture}.csv.gz"
     if not path.exists():
-        return {"error": f"fixture not extracted: {fixture}"}
+        return None
     events = load_events(str(path))
     contracts, R = fixture_returns(events)
+    return events, contracts, R
+
+
+@lru_cache(maxsize=16)
+def build_timeline(fixture):
+    """Precompute per-window candle (OHLC), fragility, RCS, liquidation, B0."""
+    loaded = _load_fixture(fixture)
+    if loaded is None:
+        return {"error": f"fixture not extracted: {fixture}"}
+    events, contracts, R = loaded
     if R is None or R.shape[1] < FIT_WINDOW:
         return {"error": "fixture too sparse"}
 
@@ -119,12 +153,14 @@ def build_timeline(fixture):
             rcs_top = [{"contract": _label(c), "contribution": round(float(v), 4)}
                        for c, v in list(rcs.items())[:3]]
         candle = _at(ohlc, i)
+        synced, n_active = _breadth(R[:, i:i + FIT_WINDOW])
         points.append({
             "block": blk, "score": s, "level": level, "rcs": rcs_top,
             "price": candle["c"] if candle else None,
             "ohlc": candle,
             "liq": _at(liq, i) or 0,
             "b0": round(100.0 * (b0[i] / b0_max), 2) if i < len(b0) and b0_max else 0.0,
+            "breadth": synced, "n_active": n_active,
         })
 
     # persistence/hysteresis confirmed alerts (the deployed detector's actual alerting)
@@ -150,6 +186,80 @@ def build_timeline(fixture):
 def f1_result(fixture):
     """Continuous out-of-sample F1 (CFI+MPS vs B0). Meaningful only for long spans."""
     return compute_f1(fixture)
+
+
+@lru_cache(maxsize=1)
+def _price_sampler():
+    """Fit the tensor-network price-path sampler on cont_q2_2022 ETH returns (proxy)."""
+    from engine.mps.price_paths import PricePathSampler
+    t = build_timeline("cont_q2_2022")
+    if "error" in t:
+        return None
+    pr = [p["price"] for p in t["points"] if p["price"]]
+    if len(pr) < 50:
+        return None
+    return PricePathSampler(order=2).fit([np.diff(np.log(pr)).tolist()])
+
+
+@lru_cache(maxsize=1)
+def _score_sampler():
+    """Fit the MPS scenario model on cont_q2_2022 fragility scores (systemic dynamics)."""
+    from engine.mps.scenario import MPSScenario
+    t = build_timeline("cont_q2_2022")
+    if "error" in t:
+        return None
+    series = [p["score"] for p in t["points"]]
+    if len(series) < 20:
+        return None
+    return MPSScenario(order=2).fit([series])
+
+
+def forecast_at(fixture, i, horizon=48, n_paths=400):
+    """Anchored forecast at point i: ETH price fan + SYSTEMIC fragility fan + P(cascade)."""
+    t = build_timeline(fixture)
+    if "error" in t:
+        return t
+    prices = [p["price"] for p in t["points"]]
+    anchor = max(0, min(i, len(prices) - 1))
+    out = {"anchor_index": anchor}
+
+    m = _price_sampler()
+    valid = [prices[j] for j in range(anchor + 1) if prices[j]]
+    if m is not None and len(valid) >= 3:
+        r = np.diff(np.log(valid)).tolist()
+        out.update(m.forecast(r[-5:], valid[-1], horizon=horizon, n_paths=n_paths))
+
+    # systemic fragility forecast (whole-market, not a single asset)
+    sm = _score_sampler()
+    if sm is not None:
+        scores = [p["score"] for p in t["points"][:anchor + 1]]
+        if len(scores) >= sm.order:
+            out["fragility"] = sm.forecast_bands(scores[-sm.order:], horizon=horizon, n_paths=n_paths)
+            out["current_score"] = round(scores[-1], 1)
+    return out
+
+
+def corr_at(fixture, i):
+    """13×13 correlation matrix at point i (whole-market synchronization heatmap)."""
+    loaded = _load_fixture(fixture)
+    if loaded is None:
+        return {"error": "not extracted"}
+    _, contracts, R = loaded
+    if R is None or R.shape[1] < FIT_WINDOW:
+        return {"error": "sparse"}
+    anchor = max(0, min(i, R.shape[1] - FIT_WINDOW))
+    window = R[:, anchor:anchor + FIT_WINDOW]
+    mask = window.std(axis=1) > 1e-12
+    labels = [_label(c) for c, mk in zip(contracts, mask) if mk]
+    Rm = window[mask]
+    if Rm.shape[0] < 2:
+        return {"labels": labels, "matrix": [], "anchor_index": anchor}
+    C = shrinkage_correlation(Rm)
+    return {
+        "labels": labels,
+        "matrix": [[round(float(x), 3) for x in row] for row in C],
+        "anchor_index": anchor,
+    }
 
 
 def create_app(default_fixture="luna_2022_05_09"):

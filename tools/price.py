@@ -19,15 +19,20 @@ WETH_DECIMALS = 18
 DRAWDOWN_PCT = 0.10      # >= 10% drop = stress
 HORIZON_HOURS = 48.0     # forward look-ahead
 
+# dust/MEV probe swaps (e.g. 1 raw USDC ⇄ 1e9 wei) yield garbage implied prices
+# ($1000 or $2M/ETH). Require a meaningful notional on both legs to derive a price.
+MIN_USDC_RAW = 10 ** USDC_DECIMALS          # >= 1 USDC
+MIN_WETH_RAW = 10 ** (WETH_DECIMALS - 4)    # >= 0.0001 ETH
+
 
 def _swap_price(e):
-    """USDC per WETH from a USDC/WETH swap; None if unusable."""
+    """USDC per WETH from a USDC/WETH swap; None if unusable or dust."""
     try:
         a0 = abs(float(e["amount0"]))  # USDC leg (token0)
         a1 = abs(float(e["amount1"]))  # WETH leg (token1)
     except (TypeError, ValueError):
         return None
-    if a0 == 0 or a1 == 0:
+    if a0 < MIN_USDC_RAW or a1 < MIN_WETH_RAW:
         return None
     return (a0 / 10 ** USDC_DECIMALS) / (a1 / 10 ** WETH_DECIMALS)
 
@@ -89,6 +94,10 @@ def window_ohlc(events):
         ri = bisect.bisect_right(blocks, end)
         win = [swaps[j][1] for j in range(li, ri)]
         if win:
+            # drop dust/garbage swaps (e.g. 2 raw USDC ⇄ 1e6 wei → $2M/ETH) whose
+            # implied price is far from the window median, so h/l wicks stay real
+            m = median(win)
+            win = [p for p in win if 0.5 * m <= p <= 2.0 * m] or win
             last_close = win[-1]
             ohlc.append({"o": round(win[0], 2), "h": round(max(win), 2),
                          "l": round(min(win), 2), "c": round(win[-1], 2)})

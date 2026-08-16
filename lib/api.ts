@@ -1,4 +1,4 @@
-import type { BacktestFixtures, BacktestTimeline, ExtensionSnapshot, ProtectionMode } from "./types";
+import type { BacktestFixtures, BacktestTimeline, Forecast, CorrMatrix, ExtensionSnapshot, ProtectionMode } from "./types";
 
 export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_QUANTUMRADAR_API_URL ?? "http://127.0.0.1:8000"
@@ -25,6 +25,20 @@ export function fetchBacktestFixtures(signal?: AbortSignal) {
 export function fetchBacktestTimeline(fixture: string, signal?: AbortSignal) {
   return request<BacktestTimeline>(
     `/api/v1/backtest/timeline?fixture=${encodeURIComponent(fixture)}`,
+    { signal },
+  );
+}
+
+export function fetchForecast(fixture: string, i: number, signal?: AbortSignal) {
+  return request<Forecast>(
+    `/api/v1/backtest/forecast?fixture=${encodeURIComponent(fixture)}&i=${i}`,
+    { signal },
+  );
+}
+
+export function fetchCorr(fixture: string, i: number, signal?: AbortSignal) {
+  return request<CorrMatrix>(
+    `/api/v1/backtest/corr?fixture=${encodeURIComponent(fixture)}&i=${i}`,
     { signal },
   );
 }

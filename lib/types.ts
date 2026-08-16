@@ -24,6 +24,8 @@ export interface BacktestPoint {
   ohlc: BacktestOHLC | null;
   liq: number;
   b0: number;
+  breadth: number;
+  n_active: number;
 }
 export interface BacktestTimeline {
   fixture: string;
@@ -36,6 +38,29 @@ export interface BacktestTimeline {
   error?: string;
 }
 export interface BacktestFixtures { fixtures: Array<{ name: string; category: string }> }
+
+export interface ForecastBand { step: number; p10: number; p25: number; p50: number; p75: number; p90: number }
+export interface FragilityBand { step: number; p10: number; p50: number; p90: number }
+export interface FragilityForecast { horizon: number; bands: FragilityBand[]; p_cascade: number }
+export interface Forecast {
+  current_price: number;
+  horizon: number;
+  bands: ForecastBand[];
+  p_drawdown: number;
+  drawdown_pct: number;
+  p_down: number;
+  anchor_index: number;
+  fragility?: FragilityForecast;
+  current_score?: number;
+  error?: string;
+}
+
+export interface CorrMatrix {
+  labels: string[];
+  matrix: number[][];
+  anchor_index: number;
+  error?: string;
+}
 
 export interface ExtensionSnapshot {
   version: string;

@@ -18,7 +18,7 @@ def test_timeline_structure():
     assert t["cascade_block"] == 14_732_113
     assert t["event_name"] == "LUNA / UST collapse"
     p = t["points"][0]
-    assert set(p) == {"block", "score", "level", "confirmed", "rcs", "price", "liq", "b0", "ohlc"}
+    assert set(p) == {"block", "score", "level", "confirmed", "rcs", "price", "liq", "b0", "ohlc", "breadth", "n_active"}
 
 
 def test_red_appears_before_cascade_with_lead_time():
